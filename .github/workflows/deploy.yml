@@ -1,4 +1,4 @@
-name: CI/CD
+﻿name: CI/CD
 
 on:
   push:
@@ -203,52 +203,40 @@ jobs:
           # credential that something else put in the environment.
           translate-env-variables: false
 
-      - name: Init
-        working-directory: terraform
-        run: terraform init -input=false
-
-      - name: Plan
-        working-directory: terraform
-        run: terraform plan -out=tfplan -input=false
-
-      - name: Upload plan
-        uses: actions/upload-artifact@v4
-        with:
-          name: terraform-plan
-          path: terraform/tfplan
-          retention-days: 7
-
-      - name: Apply
-        working-directory: terraform
-        run: terraform apply -auto-approve -input=false tfplan
-
-      - name: Read outputs
-        id: tf
-        working-directory: terraform
-        # Explicit allow-list. Reading every output would print the state into
-        # the log, and output values routinely end up echoed elsewhere.
+      # Terraform owns infrastructure, but it is applied once from a checkout
+      # that holds the state. A CI runner is ephemeral and starts with none, so
+      # running apply here would try to recreate resources that already exist.
+      # The deploy therefore resolves the existing resources through the AWS API.
+      - name: Resolve deploy targets
+        id: target
         run: |
           {
             echo "ecr_repository_url<<EOF"
-            terraform output -raw ecr_repository_url
+            aws ecr describe-repositories \
+              --repository-names "$REPOSITORY" \
+              --query 'repositories[0].repositoryUri' --output text
             echo EOF
             echo "lambda_function_name<<EOF"
-            terraform output -raw lambda_function_name
+            echo "$FUNCTION"
             echo EOF
             echo "log_group_name<<EOF"
-            terraform output -raw log_group_name
+            echo "/aws/lambda/$FUNCTION"
             echo EOF
             echo "api_url<<EOF"
-            terraform output -raw api_url
+            aws lambda get-function-url-config --function-name "$FUNCTION" \
+              --query 'FunctionUrl' --output text
             echo EOF
           } >> "$GITHUB_OUTPUT"
+        env:
+          FUNCTION: weather-watcher-dev-api
+          REPOSITORY: weather-watcher-dev
 
       - name: Login to ECR
         run: |
           aws ecr get-login-password --region us-east-1 \
             | docker login --username AWS --password-stdin "$REPO"
         env:
-          REPO: ${{ steps.tf.outputs.ecr_repository_url }}
+          REPO: ${{ steps.target.outputs.ecr_repository_url }}
 
       # Lambda resolves the image by tag, so :latest is what it runs. The SHA
       # tag is kept for traceability and rollback.
@@ -265,8 +253,8 @@ jobs:
 
           push: true
           tags: |
-            ${{ steps.tf.outputs.ecr_repository_url }}:${{ github.sha }}
-            ${{ steps.tf.outputs.ecr_repository_url }}:latest
+            ${{ steps.target.outputs.ecr_repository_url }}:${{ github.sha }}
+            ${{ steps.target.outputs.ecr_repository_url }}:latest
           cache-from: type=gha
           provenance: false
           sbom: false
@@ -279,8 +267,8 @@ jobs:
             --function-name "$FN" \
             --image-uri "$REPO:latest"
         env:
-          FN: ${{ steps.tf.outputs.lambda_function_name }}
-          REPO: ${{ steps.tf.outputs.ecr_repository_url }}
+          FN: ${{ steps.target.outputs.lambda_function_name }}
+          REPO: ${{ steps.target.outputs.ecr_repository_url }}
 
       - name: Wait for update
         run: |
@@ -302,8 +290,8 @@ jobs:
           echo "timed out"
           exit 1
         env:
-          FN: ${{ steps.tf.outputs.lambda_function_name }}
-          LG: ${{ steps.tf.outputs.log_group_name }}
+          FN: ${{ steps.target.outputs.lambda_function_name }}
+          LG: ${{ steps.target.outputs.log_group_name }}
 
       - name: Smoke test the live endpoint
         run: |
@@ -312,14 +300,15 @@ jobs:
             --max-time 60 "$URL/api/health"
           echo
         env:
-          URL: ${{ steps.tf.outputs.api_url }}
+          URL: ${{ steps.target.outputs.api_url }}
 
       - name: Record URL
         run: |
           {
             echo "### Deployed"
             echo
-            echo "- API: ${{ steps.tf.outputs.api_url }}"
-            echo "- Health: ${{ steps.tf.outputs.api_url }}/api/health"
-            echo "- Image: \`${{ steps.tf.outputs.ecr_repository_url }}:${{ github.sha }}\`"
+            echo "- API: ${{ steps.target.outputs.api_url }}"
+            echo "- Health: ${{ steps.target.outputs.api_url }}/api/health"
+            echo "- Image: \`${{ steps.target.outputs.ecr_repository_url }}:${{ github.sha }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
