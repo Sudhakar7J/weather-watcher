@@ -47,17 +47,19 @@ jobs:
           path: backend/coverage.out
           if-no-files-found: error
 
-      # Verified in CI rather than locally: Docker is not runnable on every
-      # developer machine, but the image is the deployable artefact.
+      # Smoke test the image on the runner's own architecture. The deploy image is
+      # arm64 for Lambda, which cannot run here; this step deliberately builds
+      # the default amd64 variant so the Dockerfile itself is exercised.
       - name: Build image
         uses: docker/build-push-action@v6
         with:
           context: ./backend
+          target: server
           push: false
           load: true
           tags: weather-watcher:test
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=server
+          cache-to: type=gha,mode=max,scope=server
 
       - name: Smoke test the image
         run: |
