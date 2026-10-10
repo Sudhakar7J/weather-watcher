@@ -244,6 +244,12 @@ jobs:
       # provenance:false is required, not cosmetic. The buildx default emits an
       # OCI index with attestation manifests, and Lambda rejects that media
       # type outright with "image manifest ... is not supported".
+      # The runner is x86 and the Lambda function is arm64, so the build runs
+      # the arm64 stages under QEMU. Without binfmt registered the emulated
+      # /bin/sh cannot exec and the build dies with "exec format error".
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
@@ -255,7 +261,6 @@ jobs:
           tags: |
             ${{ steps.target.outputs.ecr_repository_url }}:${{ github.sha }}
             ${{ steps.target.outputs.ecr_repository_url }}:latest
-          cache-from: type=gha
           provenance: false
           sbom: false
 
