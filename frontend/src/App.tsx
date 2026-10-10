@@ -91,19 +91,31 @@ export default function App() {
                 so the grid stays correct from one city to twenty without a
                 column count being hard-coded per breakpoint. */}
             <div className="mt-6 grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(17rem,1fr))]">
-              {isInitialLoad(loading, reports.length, cityErrors.length)
-                ? cities.map((city) => <CityCardSkeleton key={city} />)
-                : cities.map((city) => (
-                    <CityCard
-                      key={city}
-                      city={city}
-                      report={reportsByCity.get(city)}
-                      error={errorsByCity.get(city)}
-                      isSelected={city === activeCity}
-                      onSelect={setSelectedCity}
-                      onRemove={handleRemove}
-                    />
-                  ))}
+              {cities.map((city) => {
+                    const report = reportsByCity.get(city)
+                    const cityError = errorsByCity.get(city)
+
+                    // Per city, not per grid. While a request is in flight a
+                    // city with neither a report nor an error is still pending,
+                    // so it gets a skeleton. Deciding this once for the whole
+                    // grid let a mixed response flash "no matching location"
+                    // at cities that were simply still in flight.
+                    if (loading && report === undefined && cityError === undefined) {
+                      return <CityCardSkeleton key={city} />
+                    }
+
+                    return (
+                      <CityCard
+                        key={city}
+                        city={city}
+                        report={report}
+                        error={cityError}
+                        isSelected={city === activeCity}
+                        onSelect={setSelectedCity}
+                        onRemove={handleRemove}
+                      />
+                    )
+                  })}
             </div>
 
             {activeReport !== undefined ? (
@@ -125,19 +137,6 @@ export default function App() {
       </main>
     </div>
   )
-}
-
-/**
- * Whether the grid should show skeletons: a request is in flight and nothing
- * has arrived yet. Distinguishing this from a background refresh is what
- * stops the grid flashing on every add.
- */
-function isInitialLoad(
-  loading: boolean,
-  reportCount: number,
-  errorCount: number,
-): boolean {
-  return loading && reportCount === 0 && errorCount === 0
 }
 
 /** How long the completion tick stays up before the button returns to rest. */
