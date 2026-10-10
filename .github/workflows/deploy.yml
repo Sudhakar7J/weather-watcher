@@ -59,7 +59,6 @@ jobs:
           load: true
           tags: weather-watcher:test
           cache-from: type=gha,scope=server
-          cache-to: type=gha,mode=max,scope=server
 
       - name: Smoke test the image
         run: |
@@ -129,6 +128,7 @@ jobs:
       # serving. Without this the whole suite fails on ERR_CONNECTION_REFUSED,
       # which looks like an application bug and is not one.
       - name: Serve the built frontend
+        working-directory: frontend
         run: |
           npm run preview -- --port 4173 &
           for i in $(seq 1 30); do
