@@ -1,7 +1,7 @@
 variable "region" {
-  description = "AWS region for all resources."
+  description = "AWS region for all resources. Defaults to the region already configured in ~/.aws/config."
   type        = string
-  default     = "ap-south-1"
+  default     = "us-east-1"
 }
 
 variable "environment" {

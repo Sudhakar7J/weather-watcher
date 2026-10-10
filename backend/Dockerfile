@@ -1,53 +1,70 @@
 # syntax=docker/dockerfile:1
 
-# ---------------------------------------------------------------------------
-# Build stage
-# ---------------------------------------------------------------------------
-# Pinned to the Go version declared in go.mod so the image and local builds
-# agree. Alpine keeps this stage small; it is discarded and never ships.
-FROM golang:1.23-alpine AS build
+# Two entrypoints from one codebase. The default builds the long-running HTTP
+# server; `--target lambda` builds the AWS Lambda variant, which is the same
+# code behind a different adapter (cmd/lambda) rather than a fork.
+#
+# The bases differ on purpose: Lambda invokes the image through the runtime
+# interface client and needs the entrypoint wrapper that AWS-provided base
+# images carry. Distroless has no shell and therefore no wrapper, so an
+# identical build there fails every invoke with Runtime.InvalidEntrypoint.
 
+# ---------------------------------------------------------------------------
+# Build stage (shared)
+# ---------------------------------------------------------------------------
+# Go version tracks go.mod so the image and local builds agree.
+FROM golang:1.26-alpine AS build
+
+ARG TARGET
 WORKDIR /src
 
-# Copy manifests first so dependency resolution is cached independently of
-# source changes. There are no third-party dependencies today, so this is
-# future-proofing rather than a current speed-up.
-COPY go.mod ./
+# Manifests first so dependency resolution is cached independently of source
+# changes.
+COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
 
-# CGO_ENABLED=0 produces a static binary, which is what lets the runtime stage
-# use a distroless base with no libc at all.
-# -trimpath strips filesystem paths, and -ldflags="-s -w" drops the symbol
-# table and DWARF data, making the binary smaller and harder to fingerprint.
+# CGO_ENABLED=0 produces a static binary. -trimpath strips filesystem paths and
+# -ldflags="-s -w" drops the symbol table and DWARF data.
 RUN CGO_ENABLED=0 GOOS=linux go build \
         -trimpath \
         -ldflags="-s -w" \
-        -o /out/server \
-        ./cmd/server
+        -o /out/app \
+        ./cmd/${TARGET}
 
 # ---------------------------------------------------------------------------
-# Runtime stage
+# Runtime: long-running server
 # ---------------------------------------------------------------------------
-# Distroless contains no shell and no package manager, so the runtime image has
-# no attack surface from either. The `nonroot` variant ships a uid that already
-# exists, so no useradd step is needed.
-FROM gcr.io/distroless/static-debian12:nonroot
+# Distroless carries no shell and no package manager, so the image has no
+# attack surface from either. The `nonroot` variant already has a uid.
+FROM gcr.io/distroless/static-debian12:nonroot AS server
 
 LABEL org.opencontainers.image.title="Weather Watcher API" \
       org.opencontainers.image.description="Go service exposing cached Open-Meteo weather data" \
       org.opencontainers.image.source="https://github.com/incubrix/weather-watcher"
 
-COPY --from=build /out/server /server
+COPY --from=build /out/app /app
 
-# The service reads PORT from the environment and defaults to 8080.
-# AWS App Runner sets this automatically.
-EXPOSE 8080
+# Exec form so the binary is PID 1 and receives SIGTERM directly, which is
+# what the graceful shutdown path in cmd/server relies on.
+ENTRYPOINT ["/app"]
 
-USER nonroot:nonroot
+# ---------------------------------------------------------------------------
+# Runtime: AWS Lambda
+# ---------------------------------------------------------------------------
+FROM public.ecr.aws/lambda/provided:al2023 AS lambda
 
-# Exec form: the binary receives SIGTERM directly, which is what the graceful
-# shutdown path in cmd/server relies on. A shell-form ENTRYPOINT would spawn a
-# shell as PID 1 and swallow the signal.
-ENTRYPOINT ["/server"]
+LABEL org.opencontainers.image.title="Weather Watcher API (Lambda)" \
+      org.opencontainers.image.description="Go service exposing cached Open-Meteo weather data"
+
+# The binary must be named `bootstrap`. The provided.al2023 entrypoint looks
+# for /var/task/bootstrap and fails every invoke with "no bootstrap found"
+# otherwise. The Go runtime interface client is linked into this binary, so
+# `bootstrap` is the process Lambda starts.
+COPY --from=build /out/app ${LAMBDA_TASK_ROOT}/bootstrap
+
+# Not ENTRYPOINT: the base image's wrapper sets the runtime API variables and
+# then execs this. Overriding ENTRYPOINT is what produced
+# Runtime.InvalidEntrypoint before.
+CMD [ "bootstrap" ]
