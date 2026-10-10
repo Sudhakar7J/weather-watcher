@@ -1,0 +1,291 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Only the newest commit per branch needs to run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend (Go)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache-dependency-path: backend/go.sum
+
+      - name: Vet
+        working-directory: backend
+        run: go vet ./...
+
+      - name: Test
+        working-directory: backend
+        # The race detector needs cgo and a C toolchain; it is the single most
+        # valuable check here because the cache's whole job is concurrent access.
+        run: go test -race -count=1 -coverprofile=coverage.out ./...
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: backend/coverage.out
+          if-no-files-found: error
+
+      # Verified in CI rather than locally: Docker is not runnable on every
+      # developer machine, but the image is the deployable artefact.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: false
+          load: true
+          tags: weather-watcher:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test the image
+        run: |
+          docker run -d --rm --name smoke -p 8080:8080 weather-watcher:test
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8080/api/health; then
+              echo "healthy"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "container never became healthy"
+          docker logs smoke
+          exit 1
+
+  frontend:
+    name: Frontend (React)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        working-directory: frontend
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: frontend
+        run: npx tsc -b --noEmit
+
+      - name: Lint
+        working-directory: frontend
+        run: npm run lint
+
+      - name: Unit tests
+        working-directory: frontend
+        run: npx vitest run --coverage
+
+      - name: Build
+        working-directory: frontend
+        run: npm run build
+
+      # The e2e suite runs against the real Go server rather than a stub, so it
+      # needs the backend up and reachable before Playwright starts.
+      - name: Install Playwright browsers
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Build backend
+        run: go build -o /tmp/weather-api ./cmd/server
+        working-directory: backend
+
+      - name: Start backend
+        run: |
+          /tmp/weather-api &
+          for i in $(seq 1 30); do
+            curl -fsS http://localhost:8080/api/health && break
+            sleep 1
+          done
+
+      - name: E2E tests
+        working-directory: frontend
+        run: npx playwright test
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: frontend/playwright-report
+          retention-days: 7
+
+  terraform:
+    name: Terraform validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.16.5
+
+      - name: Format check
+        working-directory: terraform
+        # Fails the build on drift instead of silently reformatting.
+        run: terraform fmt -check -recursive -diff
+
+      - name: Init
+        working-directory: terraform
+        run: terraform init -backend=false -input=false
+
+      - name: Validate
+        working-directory: terraform
+        run: terraform validate
+
+  deploy:
+    name: Deploy to AWS
+    runs-on: ubuntu-latest
+    needs: [backend, frontend, terraform]
+    # Never deploy from an unmerged branch, and never deploy a red build.
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    permissions:
+      contents: read
+      id-token: write
+
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.16.5
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ap-south-1
+          # Fails closed rather than silently reusing a wider-privileged
+          # credential that something else put in the environment.
+          translate-env-variables: false
+
+      - name: Init
+        working-directory: terraform
+        run: terraform init -input=false
+
+      - name: Plan
+        working-directory: terraform
+        run: terraform plan -out=tfplan -input=false
+
+      - name: Upload plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan
+          path: terraform/tfplan
+          retention-days: 7
+
+      - name: Apply
+        working-directory: terraform
+        run: terraform apply -auto-approve -input=false tfplan
+
+      - name: Read outputs
+        id: tf
+        working-directory: terraform
+        # Explicit allow-list. Reading every output would print the state into
+        # the log, and output values routinely end up echoed elsewhere.
+        run: |
+          {
+            echo "ecr_repository_url<<EOF"
+            terraform output -raw ecr_repository_url
+            echo EOF
+            echo "app_runner_service_name<<EOF"
+            terraform output -raw app_runner_service_name
+            echo EOF
+            echo "app_runner_service_arn<<EOF"
+            terraform output -raw app_runner_service_arn
+            echo EOF
+            echo "api_url<<EOF"
+            terraform output -raw api_url
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Login to ECR
+        run: |
+          aws ecr get-login-password --region ap-south-1 \
+            | docker login --username AWS --password-stdin "$REPO"
+        env:
+          REPO: ${{ steps.tf.outputs.ecr_repository_url }}
+
+      # App Runner always resolves "the latest image" in the repository, so
+      # :latest is what actually gets deployed. The SHA tag is kept for
+      # traceability and rollback, not because the service references it.
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: true
+          tags: |
+            ${{ steps.tf.outputs.ecr_repository_url }}:${{ github.sha }}
+            ${{ steps.tf.outputs.ecr_repository_url }}:latest
+          cache-from: type=gha
+          provenance: false
+
+      # StartDeployment takes ServiceArn only; there is no query parameter to
+      # name the tag. The image has to be pushed first, which is why the push
+      # above is a separate step rather than part of this one.
+      - name: Start deployment
+        run: aws apprunner start-deployment --service-arn "$ARN"
+        env:
+          ARN: ${{ steps.tf.outputs.app_runner_service_arn }}
+
+      # describe-service carries DeploymentSummary, so polling the service
+      # covers the whole lifecycle without a second describe-deployment call.
+      - name: Wait for deployment
+        run: |
+          for i in $(seq 1 90); do
+            STATUS=$(aws apprunner describe-service \
+              --service-name "$SERVICE" \
+              --query 'DeploymentSummary.Status' --output text 2>/dev/null || echo PENDING)
+            echo "attempt $i: $STATUS"
+            case "$STATUS" in
+              SUCCEEDED)
+                echo "deployed"
+                exit 0
+                ;;
+              FAILED)
+                echo "deployment failed"
+                aws apprunner describe-service --service-name "$SERVICE" \
+                  --query 'DeploymentSummary' --output json
+                exit 1
+                ;;
+            esac
+            sleep 10
+          done
+          echo "timed out waiting for deployment"
+          exit 1
+        env:
+          SERVICE: ${{ steps.tf.outputs.app_runner_service_name }}
+
+      - name: Record URL
+        run: |
+          {
+            echo "### Deployed"
+            echo
+            echo "- API: ${{ steps.tf.outputs.api_url }}"
+            echo "- Health: ${{ steps.tf.outputs.api_url }}/api/health"
+            echo "- Image: \`${{ steps.tf.outputs.ecr_repository_url }}:${{ github.sha }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
