@@ -53,3 +53,21 @@ func logRequests(logger *slog.Logger, next http.Handler) http.Handler {
 		)
 	})
 }
+
+// securityHeaders sets the response headers a JSON API should carry
+// regardless of what it serves. Cheap, and they close off whole classes of
+// browser-side mistakes without touching application logic.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		// This API returns JSON only; a browser must never be talked into
+		// treating a response as HTML or a stylesheet.
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "no-referrer")
+		// No caching: every response is per-city live data, and a shared cache
+		// would serve one city's weather to another viewer.
+		h.Set("Cache-Control", "no-store")
+		next.ServeHTTP(w, r)
+	})
+}

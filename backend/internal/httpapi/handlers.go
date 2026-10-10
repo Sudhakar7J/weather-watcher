@@ -99,6 +99,9 @@ func New(svc *weather.Service, allowedOrigins []string, opts ...Option) http.Han
 
 	var h http.Handler = mux
 	h = logRequests(s.logger, h)
+	// Outermost, so the headers are present on every response including the
+	// CORS preflight and any error path.
+	h = securityHeaders(h)
 	h = cors(allowedOrigins, h)
 	return h
 }

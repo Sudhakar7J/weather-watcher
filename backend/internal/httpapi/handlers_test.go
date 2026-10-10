@@ -495,3 +495,37 @@ func TestCORSDefersToLambdaFunctionURL(t *testing.T) {
 		t.Fatalf("Access-Control-Allow-Origin = %q, want none when the edge already set it", got)
 	}
 }
+
+func TestSecurityHeadersOnEveryResponse(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHandler(t, stubUpstream(t, nil), []string{"*"})
+
+	rec := doGet(t, h, "/api/health")
+	for header, want := range map[string]string{
+		"X-Content-Type-Options": "nosniff",
+		"X-Frame-Options":        "DENY",
+		"Referrer-Policy":        "no-referrer",
+		"Cache-Control":          "no-store",
+	} {
+		if got := rec.Header().Get(header); got != want {
+			t.Errorf("%s = %q, want %q", header, got, want)
+		}
+	}
+}
+
+// An error response must carry them too; the preflight path bypasses the
+// handler entirely and is covered separately.
+func TestSecurityHeadersOnErrorResponse(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHandler(t, stubUpstream(t, nil), []string{"*"})
+
+	rec := doGet(t, h, "/api/weather")
+	if rec.Code == http.StatusOK {
+		t.Fatalf("expected an error status, got %d", rec.Code)
+	}
+	if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("X-Content-Type-Options = %q on an error response, want nosniff", got)
+	}
+}
