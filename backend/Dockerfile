@@ -1,8 +1,10 @@
 # syntax=docker/dockerfile:1
 
-# Two entrypoints from one codebase. The default builds the long-running HTTP
-# server; `--target lambda` builds the AWS Lambda variant, which is the same
-# code behind a different adapter (cmd/lambda) rather than a fork.
+# One codebase, two entrypoints. The `server` target builds the long-running
+# HTTP server; the `lambda` target builds the AWS Lambda variant, which is the
+# same code behind a different adapter (cmd/lambda) rather than a fork. Each
+# target names its own command, so neither depends on the caller passing a
+# build arg correctly.
 #
 # The bases differ on purpose: Lambda invokes the image through the runtime
 # interface client and needs the entrypoint wrapper that AWS-provided base
@@ -10,28 +12,27 @@
 # identical build there fails every invoke with Runtime.InvalidEntrypoint.
 
 # ---------------------------------------------------------------------------
-# Build stage (shared)
+# Build stages
 # ---------------------------------------------------------------------------
-# Go version tracks go.mod so the image and local builds agree.
-FROM golang:1.26-alpine AS build
+FROM golang:1.26-alpine AS build-server
 
-ARG TARGET
 WORKDIR /src
-
 # Manifests first so dependency resolution is cached independently of source
 # changes.
 COPY go.mod go.sum ./
 RUN go mod download
-
 COPY . .
+# CGO_ENABLED=0 produces a static binary. -trimpath strips filesystem paths
+# and -ldflags="-s -w" drops the symbol table and DWARF data.
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/app ./cmd/server
 
-# CGO_ENABLED=0 produces a static binary. -trimpath strips filesystem paths and
-# -ldflags="-s -w" drops the symbol table and DWARF data.
-RUN CGO_ENABLED=0 GOOS=linux go build \
-        -trimpath \
-        -ldflags="-s -w" \
-        -o /out/app \
-        ./cmd/${TARGET}
+FROM golang:1.26-alpine AS build-lambda
+
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/app ./cmd/lambda
 
 # ---------------------------------------------------------------------------
 # Runtime: long-running server
@@ -44,7 +45,7 @@ LABEL org.opencontainers.image.title="Weather Watcher API" \
       org.opencontainers.image.description="Go service exposing cached Open-Meteo weather data" \
       org.opencontainers.image.source="https://github.com/incubrix/weather-watcher"
 
-COPY --from=build /out/app /app
+COPY --from=build-server /out/app /app
 
 # Exec form so the binary is PID 1 and receives SIGTERM directly, which is
 # what the graceful shutdown path in cmd/server relies on.
@@ -62,7 +63,7 @@ LABEL org.opencontainers.image.title="Weather Watcher API (Lambda)" \
 # for /var/task/bootstrap and fails every invoke with "no bootstrap found"
 # otherwise. The Go runtime interface client is linked into this binary, so
 # `bootstrap` is the process Lambda starts.
-COPY --from=build /out/app ${LAMBDA_TASK_ROOT}/bootstrap
+COPY --from=build-lambda /out/app ${LAMBDA_TASK_ROOT}/bootstrap
 
 # Not ENTRYPOINT: the base image's wrapper sets the runtime API variables and
 # then execs this. Overriding ENTRYPOINT is what produced

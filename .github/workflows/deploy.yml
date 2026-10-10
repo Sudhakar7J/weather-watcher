@@ -258,7 +258,7 @@ jobs:
           context: ./backend
           target: lambda
           platforms: linux/arm64
-          build-args: TARGET=lambda
+
           push: true
           tags: |
             ${{ steps.tf.outputs.ecr_repository_url }}:${{ github.sha }}
