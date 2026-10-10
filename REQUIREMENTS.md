@@ -78,12 +78,12 @@ anonymous request carrying no credentials.
 
 | Suite | Count | Status |
 |---|---|---|
-| Go unit tests | 57 | ✅ Passing |
+| Go unit tests | 60 (75 with subtests) | ✅ Passing |
 | Frontend unit tests (Vitest) | 49 | ✅ Passing |
 | End-to-end (Playwright) | 32 | ✅ Passing |
 | Accessibility checks | Included above | ✅ ARIA, focus, keyboard, reduced motion |
 | Error-path coverage | Included above | ✅ Offline, 5xx, bad request, malformed payload, retry |
-| Race detector | 57 | ✅ Runs in CI (needs cgo, unavailable locally) |
+| Race detector | 60 | ✅ Runs in CI (needs cgo, unavailable locally) |
 | Typecheck and production build | — | ✅ Clean |
 
 ## 7. Documentation
@@ -131,9 +131,9 @@ Stated plainly rather than buried:
   free tier for this workload, so it is the cheaper option.
 - **Frontend is on Vercel**, which the PRD explicitly permits. Terraform was not
   required for it and is not used there.
-- **Deployments are CLI-driven today.** The GitHub Actions workflow is written
-  and committed but has not yet run end-to-end, because setting up the OIDC role
-  requires an AWS change made by the account owner.
+- **AWS deploys through CI, the frontend through Git.** GitHub Actions builds
+  the Lambda image and updates the function on a green pipeline. The frontend
+  redeploys from Vercel's Git integration on push to `main`.
 
 ---
 
@@ -144,7 +144,8 @@ Stated plainly rather than buried:
    scale — refills in about a second and upstream calls are free — but it is the
    first thing to change at higher traffic.
 2. **Single-region, single-environment.** No multi-AZ or staging environment.
-3. **No automated frontend redeploy.** The frontend was deployed from the CLI;
-   Git integration is not connected yet.
+3. **Cache is per execution environment.** Cold starts begin with an empty cache
+   and only warm invocations benefit, so the cache is not shared across
+   concurrent Lambdas.
 4. **CORS allows all origins.** Correct for a public read-only API, but it would
    need narrowing if the API were ever authenticated.
