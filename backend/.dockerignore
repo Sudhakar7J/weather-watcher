@@ -1,0 +1,38 @@
+# Keep the build context small and prevent host artefacts leaking into the
+# image. Everything the build needs is Go source and go.mod.
+
+# Version control and tooling
+.git
+.gitignore
+.github
+.cursor
+
+# Local build output
+bin/
+*.exe
+*.test
+*.out
+coverage.*
+
+# Logs and scratch files
+*.log
+*.err
+tmp/
+temp/
+
+# Container files themselves are not needed inside the image
+Dockerfile
+.dockerignore
+docker-compose*.yml
+
+# Editor noise
+.vscode
+.idea
+*.swp
+
+# Secrets must never reach the image, even by accident
+.env
+.env.*
+!.env.example
+*.pem
+*.key
