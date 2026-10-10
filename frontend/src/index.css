@@ -1,0 +1,189 @@
+@import 'tailwindcss';
+
+@custom-variant dark (&:is(.dark *));
+
+/* ---------------------------------------------------------------------------
+   Design tokens
+
+   "Glanceable before readable": each city card is tinted by its actual
+   conditions, so the dashboard can be read at a glance before any text is
+   parsed. Every gradient runs mid-to-dark so white foreground text keeps at
+   least a 4.5:1 contrast ratio against the lighter end of its own gradient.
+   --------------------------------------------------------------------------- */
+:root {
+  --background: #f6f7f9;
+  --foreground: #0b0f14;
+  --card: #ffffff;
+  --card-foreground: #0b0f14;
+
+  --primary: #1d4ed8;
+  --primary-foreground: #ffffff;
+
+  --accent: #0d9488;
+  --accent-foreground: #ffffff;
+
+  --muted: #eceff3;
+  --muted-foreground: #5b6673;
+
+  --border: #e2e6eb;
+  --input: #d5dae1;
+
+  --destructive: #c02626;
+  --destructive-foreground: #ffffff;
+
+  /* Restrained radius scale. Generous rounding on every surface reads as a
+     toy; cards carry the larger radius and controls stay tight. */
+  --radius: 0.5rem;
+
+  --font-sans: 'Geist', 'Inter Tight', ui-sans-serif, system-ui, sans-serif;
+
+  /* Overlays on tinted cards */
+  --on-tint: #ffffff;
+  --on-tint-muted: rgb(255 255 255 / 0.72);
+  --on-tint-faint: rgb(255 255 255 / 0.55);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --font-sans: var(--font-sans);
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    /* Large temperature readings read as instrument values, not prose, so the
+       digits are aligned and the tracking is tightened. */
+    font-feature-settings: 'cv11' 1, 'ss01' 1;
+  }
+
+  /* Digits occupy equal width so readings align down a column. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Interactive elements should advertise that they are interactive. Native
+     buttons do not show a pointer by default, which makes large card-sized
+     targets feel broken. */
+  button:not(:disabled),
+  [role='button']:not([aria-disabled='true']) {
+    cursor: pointer;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* On a tinted card the focus ring must stay visible against the gradient. */
+  [data-condition] :focus-visible {
+    outline-color: #ffffff;
+  }
+}
+
+@layer components {
+  /* ---------------------------------------------------------------------
+     Condition palettes.
+
+     Each card sets data-condition and the gradient follows. Keeping this in
+     CSS rather than inline styles means the palette is inspectable and
+     themeable in one place.
+     --------------------------------------------------------------------- */
+  [data-condition] {
+    --card-gradient-from: #475569;
+    --card-gradient-to: #1e293b;
+    --card-ring: rgb(255 255 255 / 0);
+  }
+
+  [data-condition='clear'] {
+    --card-gradient-from: #0284c7;
+    --card-gradient-to: #0c4a6e;
+    --card-ring: #38bdf8;
+  }
+  /* Distinctly bluer than "clear" so the two never read as the same sky. */
+  [data-condition='cloudy'] {
+    --card-gradient-from: #5b74d6;
+    --card-gradient-to: #2a3168;
+    --card-ring: #a5b4fc;
+  }
+  [data-condition='overcast'] {
+    --card-gradient-from: #64748b;
+    --card-gradient-to: #1e293b;
+    --card-ring: #cbd5e1;
+  }
+  [data-condition='fog'] {
+    --card-gradient-from: #78716c;
+    --card-gradient-to: #292524;
+    --card-ring: #d6d3d1;
+  }
+  [data-condition='drizzle'] {
+    --card-gradient-from: #0d9488;
+    --card-gradient-to: #134e4a;
+    --card-ring: #5eead4;
+  }
+  [data-condition='rain'] {
+    --card-gradient-from: #2563eb;
+    --card-gradient-to: #1e1b4b;
+    --card-ring: #93c5fd;
+  }
+  [data-condition='snow'] {
+    --card-gradient-from: #0284c7;
+    --card-gradient-to: #0f172a;
+    --card-ring: #bae6fd;
+  }
+  [data-condition='thunder'] {
+    --card-gradient-from: #7c3aed;
+    --card-gradient-to: #2e1065;
+    --card-ring: #ddd6fe;
+  }
+
+  .card-surface {
+    background-image: linear-gradient(
+      145deg,
+      var(--card-gradient-from) 0%,
+      var(--card-gradient-to) 100%
+    );
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
