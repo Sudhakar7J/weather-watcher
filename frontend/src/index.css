@@ -177,6 +177,47 @@
   }
 }
 
+/* Refresh affordance.
+   A constant 360deg spin reads as a generic loading spinner. Sweeping to
+   300deg and holding reads as a deliberate action in progress, which is
+   what the button actually is. Gated on motion preference so the global
+   reduce block below stays the single source of truth for the opt-out. */
+@keyframes refresh-sweep {
+  0% {
+    transform: rotate(0deg);
+  }
+  70%,
+  100% {
+    transform: rotate(300deg);
+  }
+}
+
+/* Overshoot on entry so the confirmation has some snap to it. */
+@keyframes refresh-check {
+  0% {
+    transform: scale(0.5);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.18);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .refresh-sweep {
+    animation: refresh-sweep 1s cubic-bezier(0.45, 0, 0.25, 1) infinite;
+  }
+
+  .refresh-check {
+    animation: refresh-check 260ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

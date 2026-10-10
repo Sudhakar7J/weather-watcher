@@ -1,5 +1,13 @@
-import { Suspense, lazy, useCallback, useMemo, useState } from 'react'
-import { CloudSun, RefreshCw } from 'lucide-react'
+import {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
+import { Check, CloudSun, RefreshCw } from 'lucide-react'
 
 import CityCard from '@/components/city-card'
 import CityInput from '@/components/city-input'
@@ -132,6 +140,66 @@ function isInitialLoad(
   return loading && reportCount === 0 && errorCount === 0
 }
 
+/** How long the completion tick stays up before the button returns to rest. */
+const SETTLED_HOLD_MS = 1600
+
+function RefreshButton({
+  loading,
+  onRefresh,
+}: {
+  loading: boolean
+  onRefresh: () => void
+}) {
+  // A refresh that silently returns to rest reads as "nothing happened",
+  // which is indistinguishable from a click that never registered.
+  const [settled, setSettled] = useState(false)
+  const wasLoading = useRef(loading)
+
+  useEffect(() => {
+    if (loading) {
+      wasLoading.current = true
+      return
+    }
+    if (!wasLoading.current) return
+    wasLoading.current = false
+    setSettled(true)
+    const timer = setTimeout(() => setSettled(false), SETTLED_HOLD_MS)
+    return () => clearTimeout(timer)
+  }, [loading])
+
+  return (
+    <>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={onRefresh}
+        disabled={loading}
+        aria-busy={loading}
+        className="rounded-lg"
+      >
+        {settled && !loading ? (
+          <Check
+            className="refresh-check size-4 text-emerald-600"
+            aria-hidden="true"
+          />
+        ) : (
+          <RefreshCw
+            className={`size-4 ${loading ? 'refresh-sweep' : ''}`}
+            aria-hidden="true"
+          />
+        )}
+        Refresh
+      </Button>
+
+      {/* The tick is decorative. This is what actually reports the outcome,
+          and it has to be polite so it never interrupts what it reads next. */}
+      <span className="sr-only" role="status" aria-live="polite">
+        {loading ? 'Refreshing weather' : settled ? 'Weather updated' : ''}
+      </span>
+    </>
+  )
+}
+
 function TopBar({
   loading,
   cityCount,
@@ -169,20 +237,7 @@ function TopBar({
             {API_BASE_URL.replace(/^https?:\/\//, '')}
           </span>
 
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onRefresh}
-            disabled={loading}
-            aria-busy={loading}
-            className="rounded-lg"
-          >
-            <RefreshCw
-              className={`size-4 ${loading ? 'animate-spin motion-reduce:animate-none' : ''}`}
-              aria-hidden="true"
-            />
-            Refresh
-          </Button>
+          <RefreshButton loading={loading} onRefresh={onRefresh} />
         </div>
       </div>
     </header>

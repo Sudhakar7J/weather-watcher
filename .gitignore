@@ -105,6 +105,10 @@ tmp/
 temp/
 .cache/
 *.log
+*.err
+.devpids
+*.pid
+screenshots/
 *.bak
 *.tmp
 *.orig
