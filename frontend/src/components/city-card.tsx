@@ -73,7 +73,40 @@ export default function CityCard({
     )
   }
 
-  if (report === undefined) return null
+  // A city can be tracked with no report and no error, which happens when the
+  // geocoder resolves it under a different name than was typed ("asd" comes
+  // back as a real place elsewhere). Returning null here left a silent gap in
+  // the grid, so say so instead.
+  if (report === undefined) {
+    return (
+      <article
+        className="rounded-2xl border border-dashed border-border bg-card/40 p-5"
+        aria-label={`${city}, no data`}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="truncate text-base font-medium">{city}</h3>
+            <p className="mt-1 text-sm text-muted-foreground">
+              No matching location
+            </p>
+          </div>
+          {onRemove !== undefined ? (
+            <button
+              type="button"
+              onClick={() => onRemove(city)}
+              aria-label={`Remove ${city}`}
+              className="cursor-pointer rounded-md p-1 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <X className="size-4" aria-hidden="true" />
+            </button>
+          ) : null}
+        </div>
+        <p className="mt-4 text-sm text-muted-foreground">
+          Check the spelling, or try adding the city again.
+        </p>
+      </article>
+    )
+  }
 
   const kind = conditionKind(report.current.code)
   const { icon: ConditionIcon, label } = conditionStyle(report.current.code)

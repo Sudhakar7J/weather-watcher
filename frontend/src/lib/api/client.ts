@@ -18,8 +18,16 @@ export const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080'
 ).replace(/\/+$/, '')
 
-/** How long to wait for the backend before giving up. */
-export const REQUEST_TIMEOUT_MS = 15_000
+/**
+ * How long to wait for the backend before giving up.
+ *
+ * Generous on purpose. A cold Lambda start plus one geocode and one forecast
+ * call per city, for up to twenty cities, takes tens of seconds; the previous
+ * 15s deadline fired before the work finished and surfaced as "no cards and
+ * no error" rather than as a timeout. The server caps its own upstream calls,
+ * so this is a ceiling, not a wait.
+ */
+export const REQUEST_TIMEOUT_MS = 60_000
 
 /**
  * Every failure the client can produce, classified.
