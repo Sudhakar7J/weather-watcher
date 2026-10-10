@@ -1,0 +1,31 @@
+# Normalise line endings so the repository is identical whether files are
+# checked out on Windows, macOS, or Linux. This matters here because the
+# container image is built on Linux in CI while development happens on Windows;
+# without this, CRLF would end up baked into the image and shell scripts would
+# fail with "bad interpreter".
+* text=auto eol=lf
+
+# Windows-native formats that genuinely require CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Keep these strictly LF even on Windows: POSIX shell scripts executed inside
+# the container image, and Terraform/HCL which the tooling parses verbatim.
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.tf text eol=lf
+*.tfvars text eol=lf
+*.go text eol=lf
+
+# Binary assets must never be line-ending translated or diffed as text.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.exe binary
+*.dll binary
