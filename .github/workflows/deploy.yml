@@ -178,7 +178,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ap-south-1
+          aws-region: us-east-1
           # Fails closed rather than silently reusing a wider-privileged
           # credential that something else put in the environment.
           translate-env-variables: false
@@ -212,11 +212,11 @@ jobs:
             echo "ecr_repository_url<<EOF"
             terraform output -raw ecr_repository_url
             echo EOF
-            echo "app_runner_service_name<<EOF"
-            terraform output -raw app_runner_service_name
+            echo "lambda_function_name<<EOF"
+            terraform output -raw lambda_function_name
             echo EOF
-            echo "app_runner_service_arn<<EOF"
-            terraform output -raw app_runner_service_arn
+            echo "log_group_name<<EOF"
+            terraform output -raw log_group_name
             echo EOF
             echo "api_url<<EOF"
             terraform output -raw api_url
@@ -225,60 +225,74 @@ jobs:
 
       - name: Login to ECR
         run: |
-          aws ecr get-login-password --region ap-south-1 \
+          aws ecr get-login-password --region us-east-1 \
             | docker login --username AWS --password-stdin "$REPO"
         env:
           REPO: ${{ steps.tf.outputs.ecr_repository_url }}
 
-      # App Runner always resolves "the latest image" in the repository, so
-      # :latest is what actually gets deployed. The SHA tag is kept for
-      # traceability and rollback, not because the service references it.
+      # Lambda resolves the image by tag, so :latest is what it runs. The SHA
+      # tag is kept for traceability and rollback.
+      #
+      # provenance:false is required, not cosmetic. The buildx default emits an
+      # OCI index with attestation manifests, and Lambda rejects that media
+      # type outright with "image manifest ... is not supported".
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: ./backend
+          target: lambda
+          platforms: linux/arm64
+          build-args: TARGET=lambda
           push: true
           tags: |
             ${{ steps.tf.outputs.ecr_repository_url }}:${{ github.sha }}
             ${{ steps.tf.outputs.ecr_repository_url }}:latest
           cache-from: type=gha
           provenance: false
+          sbom: false
 
-      # StartDeployment takes ServiceArn only; there is no query parameter to
-      # name the tag. The image has to be pushed first, which is why the push
-      # above is a separate step rather than part of this one.
-      - name: Start deployment
-        run: aws apprunner start-deployment --service-arn "$ARN"
-        env:
-          ARN: ${{ steps.tf.outputs.app_runner_service_arn }}
-
-      # describe-service carries DeploymentSummary, so polling the service
-      # covers the whole lifecycle without a second describe-deployment call.
-      - name: Wait for deployment
+      # Lambda does not redeploy on its own; the code update has to be
+      # published explicitly.
+      - name: Publish function code
         run: |
-          for i in $(seq 1 90); do
-            STATUS=$(aws apprunner describe-service \
-              --service-name "$SERVICE" \
-              --query 'DeploymentSummary.Status' --output text 2>/dev/null || echo PENDING)
-            echo "attempt $i: $STATUS"
+          aws lambda update-function-code \
+            --function-name "$FN" \
+            --image-uri "$REPO:latest"
+        env:
+          FN: ${{ steps.tf.outputs.lambda_function_name }}
+          REPO: ${{ steps.tf.outputs.ecr_repository_url }}
+
+      - name: Wait for update
+        run: |
+          for i in $(seq 1 60); do
+            STATUS=$(aws lambda get-function-configuration \
+              --function-name "$FN" \
+              --query 'LastUpdateStatus' --output text 2>/dev/null || echo PENDING)
             case "$STATUS" in
-              SUCCEEDED)
-                echo "deployed"
-                exit 0
-                ;;
-              FAILED)
-                echo "deployment failed"
-                aws apprunner describe-service --service-name "$SERVICE" \
-                  --query 'DeploymentSummary' --output json
+              Successful) echo "deployed"; exit 0 ;;
+              Failed)
+                echo "update failed:"
+                aws lambda get-function-configuration --function-name "$FN" --output json
+                aws logs tail "$LG" --since 5m 2>/dev/null || true
                 exit 1
                 ;;
             esac
-            sleep 10
+            sleep 5
           done
-          echo "timed out waiting for deployment"
+          echo "timed out"
           exit 1
         env:
-          SERVICE: ${{ steps.tf.outputs.app_runner_service_name }}
+          FN: ${{ steps.tf.outputs.lambda_function_name }}
+          LG: ${{ steps.tf.outputs.log_group_name }}
+
+      - name: Smoke test the live endpoint
+        run: |
+          # A green pipeline is not proof the API answers; hit it.
+          curl -fsS --retry 5 --retry-delay 5 --retry-all-errors \
+            --max-time 60 "$URL/api/health"
+          echo
+        env:
+          URL: ${{ steps.tf.outputs.api_url }}
 
       - name: Record URL
         run: |
