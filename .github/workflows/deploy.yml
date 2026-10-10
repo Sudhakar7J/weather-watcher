@@ -190,10 +190,6 @@ jobs:
         with:
           terraform_version: 1.16.5
 
-      - name: Show OIDC token claims
-        run: |
-          python3 -c "import base64,json,os; t=os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']; p=t.split('.')[1]; p+='='*(-len(p)%4); c=json.loads(base64.urlsafe_b64decode(p)); print('AUD='+str(c.get('aud'))); print('SUB='+str(c.get('sub'))); print('ISS='+str(c.get('iss')))"
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
