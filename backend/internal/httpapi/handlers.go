@@ -84,6 +84,19 @@ func New(svc *weather.Service, allowedOrigins []string, opts ...Option) http.Han
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.HandleFunc("GET /api/weather", s.handleWeather)
 
+	// Visiting the bare host used to land on a bare 404, which reads as a
+	// broken deployment rather than a missing route. Point it at the index of
+	// real endpoints so the URL is useful to paste and to open.
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"service": "weather-watcher-api",
+			"endpoints": []string{
+				"/api/health",
+				"/api/weather?cities=London,Tokyo",
+			},
+		})
+	})
+
 	var h http.Handler = mux
 	h = logRequests(s.logger, h)
 	h = cors(allowedOrigins, h)
