@@ -471,3 +471,27 @@ func TestCitiesQueryIsURLDecoded(t *testing.T) {
 		t.Errorf("Results = %+v, want a single New York entry", body.Results)
 	}
 }
+
+// Regression: behind a Lambda Function URL the edge sets its own CORS headers.
+// If the app also emitted its own, the two combined into a single
+// "*,*" header value and browsers rejected every response, which presented to
+// the user as an unreachable backend rather than as a CORS failure.
+func TestCORSDefersToLambdaFunctionURL(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHandler(t, stubUpstream(t, nil), []string{"*"})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	req.Header.Set("Origin", "https://dashboard.example.com")
+	req.Header.Set("X-Amzn-Trace-Id", "Root=1-000-000")
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if got := rec.Header().Values("Access-Control-Allow-Origin"); len(got) != 0 {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want none when the edge already set it", got)
+	}
+}

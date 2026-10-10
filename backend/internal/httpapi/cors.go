@@ -19,6 +19,17 @@ func cors(allowedOrigins []string, next http.Handler) http.Handler {
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
+
+		// Behind an AWS Lambda Function URL the edge already applied its own
+		// CORS headers. Emitting a second set produced a combined
+		// "Access-Control-Allow-Origin: *,*" which browsers reject outright,
+		// so every call failed even though both halves were individually
+		// correct. Skipping here keeps a single owner of the header.
+		if origin != "" && r.Header.Get("X-Amzn-Trace-Id") != "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		_, originAllowed := exact[origin]
 
 		switch {
